@@ -56,31 +56,31 @@ def get_locations_directory() -> Path:
     return path
 
 
-# Directory where location markdown files are stored
-LOCATIONS_DIR = get_locations_directory()
-
-
-def get_all_locations() -> list[str]:
+def get_all_locations(locations_dir: Path) -> list[str]:
     """Get a list of all location names from the Locations directory.
+
+    Args:
+        locations_dir: Path to the directory containing location markdown files
 
     Returns:
         List of location names (without .md extension)
     """
-    if not LOCATIONS_DIR.exists():
+    if not locations_dir.exists():
         return []
 
     locations = []
-    for file_path in LOCATIONS_DIR.glob("*.md"):
+    for file_path in locations_dir.glob("*.md"):
         locations.append(file_path.stem)
 
     return sorted(locations)
 
 
-def get_location_details(location_name: str) -> str:
+def get_location_details(location_name: str, locations_dir: Path) -> str:
     """Get the full markdown content of a specific location.
 
     Args:
         location_name: Name of the location (without .md extension)
+        locations_dir: Path to the directory containing location markdown files
 
     Returns:
         The markdown content of the location file
@@ -88,12 +88,16 @@ def get_location_details(location_name: str) -> str:
     Raises:
         FileNotFoundError: If the location file doesn't exist
     """
-    file_path = LOCATIONS_DIR / f"{location_name}.md"
+    file_path = locations_dir / f"{location_name}.md"
 
     if not file_path.exists():
         raise FileNotFoundError(f"Location '{location_name}' not found")
 
     return file_path.read_text(encoding="utf-8")
+
+
+# Global variable to store the locations directory (initialized in main)
+_locations_dir: Path | None = None
 
 
 # Create the MCP server
@@ -143,15 +147,19 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 
     Raises:
         ValueError: If the tool name is unknown
+        RuntimeError: If locations directory is not initialized
     """
+    if _locations_dir is None:
+        raise RuntimeError("Locations directory not initialized")
+
     if name == "list_locations":
-        locations = get_all_locations()
+        locations = get_all_locations(_locations_dir)
         if not locations:
             return [
                 TextContent(
                     type="text",
                     text=(
-                        f"No locations found in {LOCATIONS_DIR}. "
+                        f"No locations found in {_locations_dir}. "
                         "Add markdown files to this directory."
                     ),
                 )
@@ -176,7 +184,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             ]
 
         try:
-            content = get_location_details(location_name)
+            content = get_location_details(location_name, _locations_dir)
             return [
                 TextContent(
                     type="text",
@@ -184,7 +192,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 )
             ]
         except FileNotFoundError as e:
-            available = get_all_locations()
+            available = get_all_locations(_locations_dir)
             available_text = ", ".join(available) if available else "none"
             return [
                 TextContent(
@@ -199,6 +207,9 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 
 async def main() -> None:
     """Run the MCP server."""
+    global _locations_dir
+    _locations_dir = get_locations_directory()
+
     async with stdio_server() as (read_stream, write_stream):
         await app.run(
             read_stream,
