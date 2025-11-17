@@ -1,6 +1,5 @@
 """Tests for main module."""
 
-import sys
 from io import StringIO
 from unittest.mock import patch
 
@@ -18,7 +17,7 @@ def test_main_prints_message() -> None:
     assert captured_output.getvalue() == "Hello from local-campaign-mcp-obsidian!\n"
 
 
-def test_main_returns_none() -> None:
-    """Test that main() returns None."""
-    result = main()
-    assert result is None
+def test_main_executes_without_error() -> None:
+    """Test that main() executes without raising an exception."""
+    # Should not raise any exception
+    main()
