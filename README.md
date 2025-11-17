@@ -1,0 +1,146 @@
+# RPG Campaign MCP Server
+
+A Model Context Protocol (MCP) server for managing RPG campaign locations stored in Obsidian-compatible markdown files.
+
+## Features
+
+- **List Locations**: Get a list of all available campaign locations
+- **Get Location Details**: Retrieve detailed information about a specific location
+
+## Installation
+
+1. Clone this repository
+2. Install dependencies using uv:
+
+```bash
+uv sync
+```
+
+## Configuration
+
+### Setting Up Your Locations Directory
+
+The server requires the `LOCATIONS_PATH` environment variable to be set to the directory containing your location markdown files.
+
+```bash
+export LOCATIONS_PATH=/path/to/your/campaign/locations
+```
+
+For example, if you use Obsidian and have a vault at `/Users/you/Documents/Campaign`, and your locations are in a `Locations` folder:
+
+```bash
+export LOCATIONS_PATH=/Users/you/Documents/Campaign/Locations
+```
+
+## Usage
+
+### Running the Server
+
+The server uses stdio for communication with MCP clients. You must set the `LOCATIONS_PATH` environment variable:
+
+```bash
+LOCATIONS_PATH=/path/to/your/locations python main.py
+```
+
+### Adding Locations
+
+Simply add markdown files to your configured locations directory. Each markdown file represents a location in your campaign.
+
+Example structure:
+```
+/your/campaign/locations/
+├── Tavern.md
+├── Forest.md
+└── Castle.md
+```
+
+The filename (without `.md` extension) becomes the location name that you use to retrieve it.
+
+### Available Tools
+
+#### list_locations
+
+Lists all available campaign locations from your configured directory.
+
+```json
+{
+  "name": "list_locations"
+}
+```
+
+#### get_location
+
+Retrieves detailed information about a specific location by name.
+
+```json
+{
+  "name": "get_location",
+  "arguments": {
+    "name": "Tavern"
+  }
+}
+```
+
+## MCP Client Configuration
+
+To use this server with an MCP client (like Claude Desktop), add the following to your client configuration.
+
+### Claude Desktop Configuration
+
+Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "rpg-campaign": {
+      "command": "python",
+      "args": ["/absolute/path/to/local-campaign-mcp-obsidian/main.py"],
+      "env": {
+        "LOCATIONS_PATH": "/absolute/path/to/your/campaign/locations"
+      }
+    }
+  }
+}
+```
+
+Or if using uv:
+
+```json
+{
+  "mcpServers": {
+    "rpg-campaign": {
+      "command": "uv",
+      "args": ["run", "/absolute/path/to/local-campaign-mcp-obsidian/main.py"],
+      "env": {
+        "LOCATIONS_PATH": "/absolute/path/to/your/campaign/locations"
+      }
+    }
+  }
+}
+```
+
+**Important**: Use absolute paths in the configuration file, not relative paths.
+
+## Development
+
+### Running Tests
+
+```bash
+uv run pytest
+```
+
+### Type Checking
+
+```bash
+uv run mypy main.py
+```
+
+### Linting
+
+```bash
+uv run ruff check .
+```
+
+## License
+
+MIT
