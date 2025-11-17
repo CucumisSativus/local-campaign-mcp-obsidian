@@ -5,6 +5,8 @@ This server provides tools to access RPG campaign location data stored in markdo
 """
 
 import asyncio
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -12,8 +14,50 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+
+def get_locations_directory() -> Path:
+    """Get the locations directory from environment variable.
+
+    Returns:
+        Path to the locations directory
+
+    Raises:
+        SystemExit: If LOCATIONS_PATH is not set or directory doesn't exist
+    """
+    locations_path = os.environ.get("LOCATIONS_PATH")
+
+    if not locations_path:
+        print(
+            "Error: LOCATIONS_PATH environment variable is not set.\n"
+            "Please set it to the path where your location markdown files are stored.\n"
+            "Example: export LOCATIONS_PATH=/path/to/your/campaign/Locations",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    path = Path(locations_path).expanduser().resolve()
+
+    if not path.exists():
+        print(
+            f"Error: Locations directory does not exist: {path}\n"
+            f"Please create the directory or update LOCATIONS_PATH.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if not path.is_dir():
+        print(
+            f"Error: LOCATIONS_PATH is not a directory: {path}\n"
+            f"Please provide a valid directory path.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    return path
+
+
 # Directory where location markdown files are stored
-LOCATIONS_DIR = Path(__file__).parent / "Locations"
+LOCATIONS_DIR = get_locations_directory()
 
 
 def get_all_locations() -> list[str]:
@@ -106,7 +150,10 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             return [
                 TextContent(
                     type="text",
-                    text="No locations found. The Locations directory is empty or doesn't exist.",
+                    text=(
+                        f"No locations found in {LOCATIONS_DIR}. "
+                        "Add markdown files to this directory."
+                    ),
                 )
             ]
 
