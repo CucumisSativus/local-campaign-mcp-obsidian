@@ -164,18 +164,18 @@ def get_all_characters(characters_dir: Path) -> list[dict[str, str]]:
                 if file_path.name.startswith("__"):
                     continue
 
-                characters.append({
-                    "name": file_path.stem,
-                    "organization": organization,
-                })
+                characters.append(
+                    {
+                        "name": file_path.stem,
+                        "organization": organization,
+                    }
+                )
 
     # Sort by organization first, then by name
     return sorted(characters, key=lambda x: (x["organization"], x["name"]))
 
 
-def get_character_details(
-    character_name: str, organization: str, characters_dir: Path
-) -> str:
+def get_character_details(character_name: str, organization: str, characters_dir: Path) -> str:
     """Get the full markdown content of a specific character.
 
     Args:
