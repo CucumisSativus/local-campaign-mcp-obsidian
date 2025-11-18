@@ -97,6 +97,47 @@ def get_characters_directory() -> Path:
     return path
 
 
+def get_sessions_directory() -> Path:
+    """Get the sessions directory from environment variable.
+
+    Returns:
+        Path to the sessions directory
+
+    Raises:
+        SystemExit: If SESSIONS_PATH is not set or directory doesn't exist
+    """
+    sessions_path = os.environ.get("SESSIONS_PATH")
+
+    if not sessions_path:
+        print(
+            "Error: SESSIONS_PATH environment variable is not set.\n"
+            "Please set it to the path where your session notes are stored.\n"
+            "Example: export SESSIONS_PATH=/path/to/your/campaign/sessions",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    path = Path(sessions_path).expanduser().resolve()
+
+    if not path.exists():
+        print(
+            f"Error: Sessions directory does not exist: {path}\n"
+            f"Please create the directory or update SESSIONS_PATH.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if not path.is_dir():
+        print(
+            f"Error: SESSIONS_PATH is not a directory: {path}\n"
+            f"Please provide a valid directory path.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    return path
+
+
 def get_all_locations(locations_dir: Path) -> list[str]:
     """Get a list of all location names from the Locations directory.
 
@@ -199,9 +240,30 @@ def get_character_details(character_name: str, organization: str, characters_dir
     return file_path.read_text(encoding="utf-8")
 
 
+def get_story_so_far(sessions_dir: Path) -> str:
+    """Get the story so far from the __result file in the sessions directory.
+
+    Args:
+        sessions_dir: Path to the directory containing session notes
+
+    Returns:
+        The content of the __result file containing the story so far
+
+    Raises:
+        FileNotFoundError: If the __result file doesn't exist
+    """
+    file_path = sessions_dir / "__result"
+
+    if not file_path.exists():
+        raise FileNotFoundError(f"Story file '__result' not found in {sessions_dir}")
+
+    return file_path.read_text(encoding="utf-8")
+
+
 # Global variables to store directories (initialized in main)
 _locations_dir: Path | None = None
 _characters_dir: Path | None = None
+_sessions_dir: Path | None = None
 
 
 # Create the MCP server
@@ -264,6 +326,15 @@ async def list_tools() -> list[Tool]:
                 "required": ["name", "organization"],
             },
         ),
+        Tool(
+            name="get_story_so_far",
+            description="Get the story so far from previous session notes",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        ),
     ]
 
 
@@ -282,7 +353,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         ValueError: If the tool name is unknown
         RuntimeError: If locations directory is not initialized
     """
-    if _locations_dir is None or _characters_dir is None:
+    if _locations_dir is None or _characters_dir is None or _sessions_dir is None:
         raise RuntimeError("Directories not initialized")
 
     if name == "list_locations":
@@ -408,15 +479,35 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 )
             ]
 
+    elif name == "get_story_so_far":
+        try:
+            content = get_story_so_far(_sessions_dir)
+            return [
+                TextContent(
+                    type="text",
+                    text=f"# Story So Far\n\n{content}",
+                )
+            ]
+        except FileNotFoundError as e:
+            return [
+                TextContent(
+                    type="text",
+                    text=(
+                        f"Error: {e}\n\nPlease ensure the '__result' file exists in {_sessions_dir}"
+                    ),
+                )
+            ]
+
     else:
         raise ValueError(f"Unknown tool: {name}")
 
 
 async def main() -> None:
     """Run the MCP server."""
-    global _locations_dir, _characters_dir
+    global _locations_dir, _characters_dir, _sessions_dir
     _locations_dir = get_locations_directory()
     _characters_dir = get_characters_directory()
+    _sessions_dir = get_sessions_directory()
 
     async with stdio_server() as (read_stream, write_stream):
         await app.run(

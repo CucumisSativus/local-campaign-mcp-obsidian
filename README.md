@@ -8,6 +8,7 @@ A Model Context Protocol (MCP) server for managing RPG campaign data (locations 
 - **Get Location Details**: Retrieve detailed information about a specific location
 - **List Characters**: Get a list of all characters organized by faction/organization
 - **Get Character Details**: Retrieve detailed information about a specific character
+- **Get Story So Far**: Retrieve session notes and campaign progress from previous sessions
 
 ## Installation
 
@@ -22,14 +23,16 @@ uv sync
 
 ### Setting Up Your Directories
 
-The server requires two environment variables to be set:
+The server requires three environment variables to be set:
 
 - `LOCATIONS_PATH`: Directory containing your location markdown files
 - `CHARACTERS_PATH`: Directory containing your character markdown files organized by faction/organization
+- `SESSIONS_PATH`: Directory containing your session notes
 
 ```bash
 export LOCATIONS_PATH=/path/to/your/campaign/Locations
 export CHARACTERS_PATH=/path/to/your/campaign/Characters
+export SESSIONS_PATH=/path/to/your/campaign/sessions
 ```
 
 For example, if you use Obsidian and have a vault at `/Users/you/Documents/Campaign`:
@@ -37,16 +40,17 @@ For example, if you use Obsidian and have a vault at `/Users/you/Documents/Campa
 ```bash
 export LOCATIONS_PATH=/Users/you/Documents/Campaign/Locations
 export CHARACTERS_PATH=/Users/you/Documents/Campaign/Characters
+export SESSIONS_PATH=/Users/you/Documents/Campaign/sessions
 ```
 
 ## Usage
 
 ### Running the Server
 
-The server uses stdio for communication with MCP clients. You must set both environment variables:
+The server uses stdio for communication with MCP clients. You must set all environment variables:
 
 ```bash
-LOCATIONS_PATH=/path/to/your/locations CHARACTERS_PATH=/path/to/your/characters python main.py
+LOCATIONS_PATH=/path/to/your/locations CHARACTERS_PATH=/path/to/your/characters SESSIONS_PATH=/path/to/your/sessions python main.py
 ```
 
 ### Adding Locations
@@ -85,6 +89,18 @@ Example structure:
 ```
 
 The subdirectory structure determines the character's organization, and the filename (without `.md` extension) becomes the character name.
+
+### Adding Session Notes
+
+Session notes should be stored in a `__result` file in your sessions directory. This file contains the story so far from previous sessions.
+
+Example structure:
+```
+/your/campaign/sessions/
+└── __result
+```
+
+The `__result` file should contain markdown-formatted notes about what has happened in previous game sessions.
 
 ### Available Tools
 
@@ -147,6 +163,16 @@ For nested organizations, use the path format:
 }
 ```
 
+#### get_story_so_far
+
+Retrieves the story so far from previous session notes.
+
+```json
+{
+  "name": "get_story_so_far"
+}
+```
+
 ## MCP Client Configuration
 
 To use this server with an MCP client (like Claude Desktop), add the following to your client configuration.
@@ -163,7 +189,8 @@ Add to your `claude_desktop_config.json`:
       "args": ["/absolute/path/to/local-campaign-mcp-obsidian/main.py"],
       "env": {
         "LOCATIONS_PATH": "/absolute/path/to/your/campaign/Locations",
-        "CHARACTERS_PATH": "/absolute/path/to/your/campaign/Characters"
+        "CHARACTERS_PATH": "/absolute/path/to/your/campaign/Characters",
+        "SESSIONS_PATH": "/absolute/path/to/your/campaign/sessions"
       }
     }
   }
@@ -180,7 +207,8 @@ Or if using uv:
       "args": ["run", "/absolute/path/to/local-campaign-mcp-obsidian/main.py"],
       "env": {
         "LOCATIONS_PATH": "/absolute/path/to/your/campaign/Locations",
-        "CHARACTERS_PATH": "/absolute/path/to/your/campaign/Characters"
+        "CHARACTERS_PATH": "/absolute/path/to/your/campaign/Characters",
+        "SESSIONS_PATH": "/absolute/path/to/your/campaign/sessions"
       }
     }
   }
