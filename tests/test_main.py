@@ -401,3 +401,17 @@ def test_calculate_victims_resonance_dyscrasia_matches_mood() -> None:
             result = calculate_victims_resonance(mood)
             if result.dyscrasia is not None:
                 assert result.dyscrasia in DYSCRASIA_OPTIONS[mood]
+
+
+def test_calculate_victims_resonance_acute_always_has_dyscrasia() -> None:
+    """Test that Acute level always has dyscrasia."""
+    import random
+
+    random.seed(999)  # Set seed for reproducibility
+
+    for mood in Mood:
+        for _ in range(100):
+            result = calculate_victims_resonance(mood)
+            if result.level == ResonanceLevel.ACUTE:
+                assert result.dyscrasia is not None
+                assert result.dyscrasia in DYSCRASIA_OPTIONS[mood]
