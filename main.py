@@ -6,13 +6,81 @@ This server provides tools to access RPG campaign location data stored in markdo
 
 import asyncio
 import os
+import random
 import sys
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
+
+
+class Mood(Enum):
+    """The four humors/moods for victims resonance."""
+
+    CHOLERIC = "Choleric"
+    MELANCHOLIC = "Melancholic"
+    PHLEGMATIC = "Phlegmatic"
+    SANGUINE = "Sanguine"
+
+
+class ResonanceLevel(Enum):
+    """Resonance intensity levels."""
+
+    NEGLIGIBLE = "Negligible"
+    FLEETING = "Fleeting"
+    INTENSE = "Intense"
+    ACUTE = "Acute"
+
+
+@dataclass
+class ResonanceResult:
+    """Result of a victims resonance roll."""
+
+    level: ResonanceLevel
+    dyscrasia: str | None = None
+
+
+# Dyscrasia options for each mood type
+DYSCRASIA_OPTIONS: dict[Mood, list[str]] = {
+    Mood.CHOLERIC: [
+        "bully",
+        "cycle of violence",
+        "envy",
+        "principled",
+        "vengeful",
+        "vicious",
+        "driving",
+    ],
+    Mood.MELANCHOLIC: [
+        "in mourning",
+        "lost love",
+        "lost relative",
+        "massive failure",
+        "nostalgic",
+        "recalling",
+    ],
+    Mood.PHLEGMATIC: [
+        "chill",
+        "comfortably numb",
+        "eating your emotions",
+        "given up",
+        "lone wolf",
+        "procrastinate",
+        "reflection",
+    ],
+    Mood.SANGUINE: [
+        "contagious enthusiasm",
+        "smell game",
+        "high on life",
+        "manic high",
+        "true love",
+        "stirring",
+    ],
+}
 
 
 def get_locations_directory() -> Path:
@@ -260,6 +328,40 @@ def get_story_so_far(sessions_dir: Path) -> str:
     return file_path.read_text(encoding="utf-8")
 
 
+def calculate_victims_resonance(mood: Mood) -> ResonanceResult:
+    """Calculate victims resonance based on the mood.
+
+    Args:
+        mood: The mood type (Choleric, Melancholic, Phlegmatic, or Sanguine)
+
+    Returns:
+        ResonanceResult with level and optional dyscrasia
+    """
+    # First roll: 1-10
+    first_roll = random.randint(1, 10)
+
+    if first_roll <= 5:
+        level = ResonanceLevel.NEGLIGIBLE
+    elif first_roll <= 8:
+        level = ResonanceLevel.FLEETING
+    else:
+        # Roll again for Intense or Acute
+        second_roll = random.randint(1, 10)
+        if second_roll <= 8:
+            level = ResonanceLevel.INTENSE
+        else:
+            level = ResonanceLevel.ACUTE
+
+    # Dyscrasia only possible if level is non-Negligible
+    dyscrasia = None
+    if level != ResonanceLevel.NEGLIGIBLE:
+        # 20% chance of dyscrasia
+        if random.random() < 0.2:
+            dyscrasia = random.choice(DYSCRASIA_OPTIONS[mood])
+
+    return ResonanceResult(level=level, dyscrasia=dyscrasia)
+
+
 # Global variables to store directories (initialized in main)
 _locations_dir: Path | None = None
 _characters_dir: Path | None = None
@@ -333,6 +435,25 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {},
                 "required": [],
+            },
+        ),
+        Tool(
+            name="victims_resonance",
+            description=(
+                "Roll for victims resonance based on mood type. "
+                "Returns a resonance level (Negligible, Fleeting, Intense, or Acute) "
+                "and potentially a dyscrasia."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mood": {
+                        "type": "string",
+                        "description": "The mood type of the victim",
+                        "enum": ["Choleric", "Melancholic", "Phlegmatic", "Sanguine"],
+                    }
+                },
+                "required": ["mood"],
             },
         ),
     ]
@@ -497,6 +618,44 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                     ),
                 )
             ]
+
+    elif name == "victims_resonance":
+        mood_str = arguments.get("mood")
+        if not mood_str:
+            return [
+                TextContent(
+                    type="text",
+                    text="Error: 'mood' parameter is required",
+                )
+            ]
+
+        # Validate mood value
+        valid_moods = [m.value for m in Mood]
+        if mood_str not in valid_moods:
+            valid_list = ", ".join(valid_moods)
+            return [
+                TextContent(
+                    type="text",
+                    text=f"Error: Invalid mood '{mood_str}'. Must be one of: {valid_list}",
+                )
+            ]
+
+        mood = Mood(mood_str)
+        result = calculate_victims_resonance(mood)
+
+        # Format the response
+        response_parts = [f"**Level:** {result.level.value}"]
+        if result.dyscrasia:
+            response_parts.append(f"**Dyscrasia:** {result.dyscrasia}")
+        else:
+            response_parts.append("**Dyscrasia:** None")
+
+        return [
+            TextContent(
+                type="text",
+                text=f"# Victims Resonance ({mood.value})\n\n" + "\n".join(response_parts),
+            )
+        ]
 
     else:
         raise ValueError(f"Unknown tool: {name}")
