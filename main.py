@@ -352,12 +352,10 @@ def calculate_victims_resonance(mood: Mood) -> ResonanceResult:
         else:
             level = ResonanceLevel.ACUTE
 
-    # Dyscrasia only possible if level is non-Negligible
+    # Dyscrasia only occurs for Acute level
     dyscrasia = None
-    if level != ResonanceLevel.NEGLIGIBLE:
-        # Acute always has dyscrasia, otherwise 20% chance
-        if level == ResonanceLevel.ACUTE or random.random() < 0.2:
-            dyscrasia = random.choice(DYSCRASIA_OPTIONS[mood])
+    if level == ResonanceLevel.ACUTE:
+        dyscrasia = random.choice(DYSCRASIA_OPTIONS[mood])
 
     return ResonanceResult(level=level, dyscrasia=dyscrasia)
 
