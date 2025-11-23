@@ -8,6 +8,11 @@ from unittest.mock import patch
 import pytest
 
 from main import (
+    DYSCRASIA_OPTIONS,
+    Mood,
+    ResonanceLevel,
+    ResonanceResult,
+    calculate_victims_resonance,
     get_all_characters,
     get_all_locations,
     get_character_details,
@@ -263,3 +268,136 @@ def test_get_character_details_nonexistent_organization() -> None:
 
         assert "Some Character" in str(exc_info.value)
         assert "nonexistent_org" in str(exc_info.value)
+
+
+# Victims Resonance tests
+
+
+def test_mood_enum_values() -> None:
+    """Test that Mood enum has correct values."""
+    assert Mood.CHOLERIC.value == "Choleric"
+    assert Mood.MELANCHOLIC.value == "Melancholic"
+    assert Mood.PHLEGMATIC.value == "Phlegmatic"
+    assert Mood.SANGUINE.value == "Sanguine"
+
+
+def test_resonance_level_enum_values() -> None:
+    """Test that ResonanceLevel enum has correct values."""
+    assert ResonanceLevel.NEGLIGIBLE.value == "Negligible"
+    assert ResonanceLevel.FLEETING.value == "Fleeting"
+    assert ResonanceLevel.INTENSE.value == "Intense"
+    assert ResonanceLevel.ACUTE.value == "Acute"
+
+
+def test_resonance_result_dataclass() -> None:
+    """Test ResonanceResult dataclass."""
+    result = ResonanceResult(level=ResonanceLevel.FLEETING)
+    assert result.level == ResonanceLevel.FLEETING
+    assert result.dyscrasia is None
+
+    result_with_dyscrasia = ResonanceResult(level=ResonanceLevel.INTENSE, dyscrasia="vengeful")
+    assert result_with_dyscrasia.level == ResonanceLevel.INTENSE
+    assert result_with_dyscrasia.dyscrasia == "vengeful"
+
+
+def test_dyscrasia_options_all_moods_present() -> None:
+    """Test that all moods have dyscrasia options."""
+    assert Mood.CHOLERIC in DYSCRASIA_OPTIONS
+    assert Mood.MELANCHOLIC in DYSCRASIA_OPTIONS
+    assert Mood.PHLEGMATIC in DYSCRASIA_OPTIONS
+    assert Mood.SANGUINE in DYSCRASIA_OPTIONS
+
+
+def test_dyscrasia_options_choleric() -> None:
+    """Test choleric dyscrasia options."""
+    expected = [
+        "bully",
+        "cycle of violence",
+        "envy",
+        "principled",
+        "vengeful",
+        "vicious",
+        "driving",
+    ]
+    assert DYSCRASIA_OPTIONS[Mood.CHOLERIC] == expected
+
+
+def test_dyscrasia_options_melancholic() -> None:
+    """Test melancholic dyscrasia options."""
+    expected = [
+        "in mourning",
+        "lost love",
+        "lost relative",
+        "massive failure",
+        "nostalgic",
+        "recalling",
+    ]
+    assert DYSCRASIA_OPTIONS[Mood.MELANCHOLIC] == expected
+
+
+def test_dyscrasia_options_phlegmatic() -> None:
+    """Test phlegmatic dyscrasia options."""
+    expected = [
+        "chill",
+        "comfortably numb",
+        "eating your emotions",
+        "given up",
+        "lone wolf",
+        "procrastinate",
+        "reflection",
+    ]
+    assert DYSCRASIA_OPTIONS[Mood.PHLEGMATIC] == expected
+
+
+def test_dyscrasia_options_sanguine() -> None:
+    """Test sanguine dyscrasia options."""
+    expected = [
+        "contagious enthusiasm",
+        "smell game",
+        "high on life",
+        "manic high",
+        "true love",
+        "stirring",
+    ]
+    assert DYSCRASIA_OPTIONS[Mood.SANGUINE] == expected
+
+
+def test_calculate_victims_resonance_returns_resonance_result() -> None:
+    """Test that calculate_victims_resonance returns a ResonanceResult."""
+    result = calculate_victims_resonance(Mood.CHOLERIC)
+    assert isinstance(result, ResonanceResult)
+    assert isinstance(result.level, ResonanceLevel)
+
+
+def test_calculate_victims_resonance_negligible_no_dyscrasia() -> None:
+    """Test that Negligible level never has dyscrasia."""
+    import random
+
+    random.seed(42)  # Set seed for reproducibility
+
+    # Run multiple times to ensure Negligible never has dyscrasia
+    for _ in range(100):
+        result = calculate_victims_resonance(Mood.CHOLERIC)
+        if result.level == ResonanceLevel.NEGLIGIBLE:
+            assert result.dyscrasia is None
+
+
+def test_calculate_victims_resonance_all_moods_work() -> None:
+    """Test that all mood types work with calculate_victims_resonance."""
+    for mood in Mood:
+        result = calculate_victims_resonance(mood)
+        assert isinstance(result, ResonanceResult)
+        assert result.level in ResonanceLevel
+
+
+def test_calculate_victims_resonance_dyscrasia_matches_mood() -> None:
+    """Test that when dyscrasia occurs, it matches the mood type."""
+    import random
+
+    random.seed(123)  # Set seed for reproducibility
+
+    for mood in Mood:
+        for _ in range(100):
+            result = calculate_victims_resonance(mood)
+            if result.dyscrasia is not None:
+                assert result.dyscrasia in DYSCRASIA_OPTIONS[mood]
