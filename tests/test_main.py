@@ -369,16 +369,17 @@ def test_calculate_victims_resonance_returns_resonance_result() -> None:
     assert isinstance(result.level, ResonanceLevel)
 
 
-def test_calculate_victims_resonance_negligible_no_dyscrasia() -> None:
-    """Test that Negligible level never has dyscrasia."""
+def test_calculate_victims_resonance_only_acute_has_dyscrasia() -> None:
+    """Test that only Acute level has dyscrasia."""
     import random
 
     random.seed(42)  # Set seed for reproducibility
 
-    # Run multiple times to ensure Negligible never has dyscrasia
     for _ in range(100):
         result = calculate_victims_resonance(Mood.CHOLERIC)
-        if result.level == ResonanceLevel.NEGLIGIBLE:
+        if result.level == ResonanceLevel.ACUTE:
+            assert result.dyscrasia is not None
+        else:
             assert result.dyscrasia is None
 
 
@@ -400,4 +401,18 @@ def test_calculate_victims_resonance_dyscrasia_matches_mood() -> None:
         for _ in range(100):
             result = calculate_victims_resonance(mood)
             if result.dyscrasia is not None:
+                assert result.dyscrasia in DYSCRASIA_OPTIONS[mood]
+
+
+def test_calculate_victims_resonance_acute_always_has_dyscrasia() -> None:
+    """Test that Acute level always has dyscrasia."""
+    import random
+
+    random.seed(999)  # Set seed for reproducibility
+
+    for mood in Mood:
+        for _ in range(100):
+            result = calculate_victims_resonance(mood)
+            if result.level == ResonanceLevel.ACUTE:
+                assert result.dyscrasia is not None
                 assert result.dyscrasia in DYSCRASIA_OPTIONS[mood]
