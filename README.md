@@ -45,13 +45,64 @@ export SESSIONS_PATH=/Users/you/Documents/Campaign/sessions
 
 ## Usage
 
-### Running the Server
+### Running the Server (Local Mode)
 
-The server uses stdio for communication with MCP clients. You must set all environment variables:
+The server can run in two modes: local stdio mode or HTTP mode with authentication.
+
+For **local usage** with stdio transport (e.g., Claude Desktop):
 
 ```bash
 LOCATIONS_PATH=/path/to/your/locations CHARACTERS_PATH=/path/to/your/characters SESSIONS_PATH=/path/to/your/sessions python main.py
 ```
+
+### Running the Server (Internet Mode with Authentication)
+
+For **internet-facing deployment** with HTTP/SSE transport and API key authentication:
+
+```bash
+# First, generate a secure API key
+export API_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')
+
+# Then run the HTTP server
+LOCATIONS_PATH=/path/to/your/locations \
+CHARACTERS_PATH=/path/to/your/characters \
+SESSIONS_PATH=/path/to/your/sessions \
+API_KEY=$API_KEY \
+HOST=0.0.0.0 \
+PORT=8000 \
+python main_http.py
+```
+
+Or with uv:
+
+```bash
+export API_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')
+uv run main_http.py
+```
+
+**Environment Variables for HTTP Mode:**
+- `API_KEY` (required): API key for authentication
+- `HOST` (optional): Host to bind to (default: `0.0.0.0`)
+- `PORT` (optional): Port to bind to (default: `8000`)
+- `LOCATIONS_PATH` (required): Path to locations directory
+- `CHARACTERS_PATH` (required): Path to characters directory
+- `SESSIONS_PATH` (required): Path to sessions directory
+
+**Authentication:**
+All requests (except `/health`) must include the API key in the `Authorization` header:
+
+```bash
+# Using curl
+curl -H "Authorization: Bearer YOUR_API_KEY" http://localhost:8000/sse
+
+# Or without Bearer prefix
+curl -H "Authorization: YOUR_API_KEY" http://localhost:8000/sse
+```
+
+**Endpoints:**
+- `GET /health` - Health check endpoint (no authentication required)
+- `GET /sse` - SSE endpoint for MCP communication (authentication required)
+- `POST /messages` - Message endpoint for MCP communication (authentication required)
 
 ### Adding Locations
 
@@ -175,11 +226,23 @@ Retrieves the story so far from previous session notes.
 
 ## MCP Client Configuration
 
-To use this server with an MCP client (like Claude Desktop), add the following to your client configuration.
+### Connecting to HTTP Server with Authentication
 
-### Claude Desktop Configuration
+If you're running the server in HTTP mode with authentication, MCP clients can connect using the SSE endpoint:
 
-Add to your `claude_desktop_config.json`:
+**Server URL:** `http://your-server:8000/sse`
+
+**Authentication:** Include the API key in the `Authorization` header
+
+When deploying to the internet, make sure to:
+1. Use HTTPS (via reverse proxy like nginx or Caddy)
+2. Keep your API key secure and private
+3. Consider using a firewall to restrict access
+4. Monitor server logs for unauthorized access attempts
+
+### Claude Desktop Configuration (Local Mode)
+
+Add to your `claude_desktop_config.json` for local stdio mode:
 
 ```json
 {
@@ -217,6 +280,57 @@ Or if using uv:
 
 **Important**: Use absolute paths in the configuration file, not relative paths.
 
+## Security Considerations
+
+When exposing the server to the internet:
+
+### API Key Security
+- **Generate strong API keys**: Use `python -c 'import secrets; print(secrets.token_urlsafe(32))'`
+- **Keep keys secret**: Never commit API keys to version control
+- **Rotate regularly**: Change API keys periodically
+- **Use environment variables**: Store keys in `.env` files (see `.env.example`)
+
+### Network Security
+- **Use HTTPS**: Always use TLS/SSL in production (via reverse proxy)
+- **Firewall rules**: Restrict access to known IP addresses if possible
+- **Rate limiting**: Consider adding rate limiting to prevent abuse
+- **Monitor logs**: Watch for unusual access patterns
+
+### Deployment Best Practices
+1. Run behind a reverse proxy (nginx, Caddy, Traefik)
+2. Enable HTTPS with valid SSL certificates (Let's Encrypt)
+3. Use a process manager (systemd, supervisor, pm2)
+4. Set up proper logging and monitoring
+5. Keep dependencies updated
+
+### Example Reverse Proxy Configuration (Nginx)
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name your-domain.com;
+
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # SSE specific settings
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 86400;
+    }
+}
+```
+
 ## Development
 
 ### Running Tests
@@ -228,7 +342,7 @@ uv run pytest
 ### Type Checking
 
 ```bash
-uv run mypy main.py
+uv run mypy main.py main_http.py
 ```
 
 ### Linting
