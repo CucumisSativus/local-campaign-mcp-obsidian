@@ -537,22 +537,16 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 )
             ]
 
-        # Group characters by organization for better readability
-        current_org = None
-        character_list = []
+        result = []
         for char in characters:
-            if char["organization"] != current_org:
-                current_org = char["organization"]
-                character_list.append(f"\n**{current_org}**")
-            character_list.append(f"  - {char['name']}")
-
-        character_text = "\n".join(character_list)
-        return [
-            TextContent(
-                type="text",
-                text=f"Available characters ({len(characters)}):{character_text}",
+            content = get_character_details(char["name"], char["organization"], _characters_dir)
+            result.append(
+                TextContent(
+                    type="text",
+                    text=f"# {char['name']} ({char['organization']})\n\n{content}",
+                )
             )
-        ]
+        return result
 
     elif name == "get_character":
         character_name = arguments.get("name")
