@@ -537,16 +537,16 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 )
             ]
 
-        result = []
+        character_details = []
         for char in characters:
             content = get_character_details(char["name"], char["organization"], _characters_dir)
-            result.append(
+            character_details.append(
                 TextContent(
                     type="text",
                     text=f"# {char['name']} ({char['organization']})\n\n{content}",
                 )
             )
-        return result
+        return character_details
 
     elif name == "get_character":
         character_name = arguments.get("name")
