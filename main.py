@@ -2,12 +2,37 @@
 """MCP Server for RPG Campaign Management.
 
 This server provides tools to access RPG campaign location data stored in markdown files.
+
+Transport modes
+---------------
+stdio (default)  For local Claude Desktop integration. No additional config needed.
+http             For remote/cloud deployment. Set MCP_TRANSPORT=http.
+
+Required environment variables
+-------------------------------
+LOCATIONS_PATH   Directory containing location markdown files
+CHARACTERS_PATH  Directory containing character markdown files (one subdir per faction)
+SESSIONS_PATH    Directory containing session notes (must include a ``__result`` file)
+
+HTTP-mode additional variables
+-------------------------------
+MCP_API_KEY      Bearer token clients must supply (required, minimum 32 chars).
+                 Generate one: python3 -c "import secrets; print(secrets.token_hex(32))"
+MCP_HOST         Bind address (default: 0.0.0.0)
+MCP_PORT         Listen port   (default: 8000)
 """
 
 import asyncio
+import collections
+import contextlib
+import hmac
+import json
+import logging
 import os
 import random
 import sys
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -16,6 +41,26 @@ from typing import Any
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# ASGI type aliases used by the HTTP middleware
+_Scope = MutableMapping[str, Any]
+_Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
+_Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
+
+
+# ---------------------------------------------------------------------------
+# Domain types
+# ---------------------------------------------------------------------------
 
 
 class Mood(Enum):
@@ -81,6 +126,63 @@ DYSCRASIA_OPTIONS: dict[Mood, list[str]] = {
         "stirring",
     ],
 }
+
+
+# ---------------------------------------------------------------------------
+# Path-safety helpers
+# ---------------------------------------------------------------------------
+
+
+def _validate_flat_name(value: str, field: str) -> None:
+    """Reject a name that could escape a flat (non-nested) directory.
+
+    Disallows ``..``, forward slash, back-slash, and null bytes so the name
+    cannot be used to leave the target directory.  Spaces are allowed.
+
+    Raises:
+        ValueError: If *value* contains a disallowed sequence.
+    """
+    if not value:
+        raise ValueError(f"Invalid {field}: must not be empty")
+    for seq in ("..", "/", "\\", "\x00"):
+        if seq in value:
+            raise ValueError(f"Invalid {field}")
+
+
+def _validate_nested_name(value: str, field: str) -> None:
+    """Reject a name that contains traversal sequences.
+
+    Forward slashes are *allowed* because organization paths may be nested
+    (e.g. ``Mortals/second inquisition``).  The final safety check is always
+    performed by :func:`_safe_join`.
+
+    Raises:
+        ValueError: If *value* contains ``..`` or a null byte.
+    """
+    if not value:
+        raise ValueError(f"Invalid {field}: must not be empty")
+    for seq in ("..", "\x00"):
+        if seq in value:
+            raise ValueError(f"Invalid {field}")
+
+
+def _safe_join(base_dir: Path, *parts: str) -> Path:
+    """Join *parts* onto *base_dir* and verify the result stays within it.
+
+    Uses :py:meth:`Path.resolve` so symlinks are followed before the check.
+
+    Raises:
+        ValueError: If the resolved path escapes *base_dir*.
+    """
+    candidate = base_dir.joinpath(*parts).resolve()
+    if not candidate.is_relative_to(base_dir):
+        raise ValueError("Access denied")
+    return candidate
+
+
+# ---------------------------------------------------------------------------
+# Environment-variable resolution
+# ---------------------------------------------------------------------------
 
 
 def get_locations_directory() -> Path:
@@ -206,6 +308,11 @@ def get_sessions_directory() -> Path:
     return path
 
 
+# ---------------------------------------------------------------------------
+# Data-access layer
+# ---------------------------------------------------------------------------
+
+
 def get_all_locations(locations_dir: Path) -> list[str]:
     """Get a list of all location names from the Locations directory.
 
@@ -236,9 +343,11 @@ def get_location_details(location_name: str, locations_dir: Path) -> str:
         The markdown content of the location file
 
     Raises:
+        ValueError: If location_name contains path-traversal sequences
         FileNotFoundError: If the location file doesn't exist
     """
-    file_path = locations_dir / f"{location_name}.md"
+    _validate_flat_name(location_name, "location name")
+    file_path = _safe_join(locations_dir, f"{location_name}.md")
 
     if not file_path.exists():
         raise FileNotFoundError(f"Location '{location_name}' not found")
@@ -296,9 +405,12 @@ def get_character_details(character_name: str, organization: str, characters_dir
         The markdown content of the character file
 
     Raises:
+        ValueError: If character_name or organization contain path-traversal sequences
         FileNotFoundError: If the character file doesn't exist
     """
-    file_path = characters_dir / organization / f"{character_name}.md"
+    _validate_flat_name(character_name, "character name")
+    _validate_nested_name(organization, "organization")
+    file_path = _safe_join(characters_dir, organization, f"{character_name}.md")
 
     if not file_path.exists():
         raise FileNotFoundError(
@@ -360,11 +472,14 @@ def calculate_victims_resonance(mood: Mood) -> ResonanceResult:
     return ResonanceResult(level=level, dyscrasia=dyscrasia)
 
 
-# Global variables to store directories (initialized in main)
+# ---------------------------------------------------------------------------
+# MCP server
+# ---------------------------------------------------------------------------
+
+# Global directories (initialised in main before the server starts)
 _locations_dir: Path | None = None
 _characters_dir: Path | None = None
 _sessions_dir: Path | None = None
-
 
 # Create the MCP server
 app = Server("rpg-campaign-server")
@@ -514,6 +629,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                     text=f"# {location_name}\n\n{content}",
                 )
             ]
+        except ValueError as e:
+            return [TextContent(type="text", text=f"Error: {e}")]
         except FileNotFoundError as e:
             available = get_all_locations(_locations_dir)
             available_text = ", ".join(available) if available else "none"
@@ -576,6 +693,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                     text=f"# {character_name} ({organization})\n\n{content}",
                 )
             ]
+        except ValueError as e:
+            return [TextContent(type="text", text=f"Error: {e}")]
         except FileNotFoundError as e:
             characters = get_all_characters(_characters_dir)
             # Show characters from the same organization if available
@@ -653,19 +772,185 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         raise ValueError(f"Unknown tool: {name}")
 
 
+# ---------------------------------------------------------------------------
+# HTTP transport — authentication and rate-limiting
+# ---------------------------------------------------------------------------
+
+
+class _RateLimiter:
+    """Sliding-window in-memory rate limiter (per client IP)."""
+
+    def __init__(self, max_requests: int = 60, window_seconds: int = 60) -> None:
+        self._max = max_requests
+        self._window = float(window_seconds)
+        self._store: dict[str, collections.deque[float]] = {}
+
+    def is_allowed(self, client_id: str) -> bool:
+        now = time.monotonic()
+        window = self._store.setdefault(client_id, collections.deque())
+        cutoff = now - self._window
+        while window and window[0] < cutoff:
+            window.popleft()
+        if len(window) >= self._max:
+            return False
+        window.append(now)
+        return True
+
+
+class _APIKeyMiddleware:
+    """ASGI middleware: require a Bearer token and enforce per-IP rate limiting.
+
+    The token is compared with :func:`hmac.compare_digest` to prevent
+    timing-based side-channel attacks.
+    """
+
+    def __init__(self, app: Any, api_key: str) -> None:
+        self._app = app
+        self._api_key_bytes = api_key.encode()
+        self._limiter = _RateLimiter(max_requests=60, window_seconds=60)
+
+    async def __call__(self, scope: _Scope, receive: _Receive, send: _Send) -> None:
+        if scope["type"] not in ("http", "websocket"):
+            # Pass lifespan and other non-HTTP events straight through
+            await self._app(scope, receive, send)
+            return
+
+        client = scope.get("client")
+        client_ip = client[0] if client else "unknown"
+
+        # --- Rate limit ---
+        if not self._limiter.is_allowed(client_ip):
+            logger.warning("Rate limit exceeded for %s", client_ip)
+            await _json_error(send, 429, "Too Many Requests", {"Retry-After": "60"})
+            return
+
+        # --- Bearer token ---
+        headers = {k.lower(): v for k, v in scope.get("headers", [])}
+        auth_header = headers.get(b"authorization", b"").decode("utf-8", errors="replace")
+        token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else ""
+
+        if not token or not hmac.compare_digest(token.encode(), self._api_key_bytes):
+            logger.warning("Unauthorized request from %s", client_ip)
+            await _json_error(send, 401, "Unauthorized", {"WWW-Authenticate": "Bearer"})
+            return
+
+        await self._app(scope, receive, send)
+
+
+async def _json_error(
+    send: _Send,
+    status: int,
+    message: str,
+    extra_headers: dict[str, str] | None = None,
+) -> None:
+    """Send a minimal JSON error response without consuming *receive*."""
+    body = json.dumps({"error": message}).encode()
+    headers: list[tuple[bytes, bytes]] = [
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(body)).encode()),
+    ]
+    if extra_headers:
+        headers.extend((k.encode(), v.encode()) for k, v in extra_headers.items())
+    await send({"type": "http.response.start", "status": status, "headers": headers})
+    await send({"type": "http.response.body", "body": body, "more_body": False})
+
+
+def _require_api_key() -> str:
+    """Read and validate MCP_API_KEY from the environment.
+
+    Raises:
+        SystemExit: If the key is missing or shorter than 32 characters.
+    """
+    key = os.environ.get("MCP_API_KEY", "").strip()
+    if not key:
+        print(
+            "Error: MCP_API_KEY is not set.\n"
+            "Set a strong random key before exposing the server.\n"
+            'Generate one: python3 -c "import secrets; print(secrets.token_hex(32))"',
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if len(key) < 32:
+        print(
+            "Error: MCP_API_KEY must be at least 32 characters long.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return key
+
+
+# ---------------------------------------------------------------------------
+# HTTP server entry-point
+# ---------------------------------------------------------------------------
+
+
+async def _run_http_server() -> None:
+    """Run the MCP server over Streamable HTTP with Bearer-token authentication."""
+    import uvicorn
+    from mcp.server.fastmcp.server import StreamableHTTPASGIApp
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    api_key = _require_api_key()
+    host = os.environ.get("MCP_HOST", "0.0.0.0")
+    port_str = os.environ.get("MCP_PORT", "8000")
+    try:
+        port = int(port_str)
+    except ValueError:
+        print(f"Error: MCP_PORT must be an integer, got {port_str!r}", file=sys.stderr)
+        sys.exit(1)
+
+    session_manager = StreamableHTTPSessionManager(app=app)
+    mcp_asgi = StreamableHTTPASGIApp(session_manager)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_starlette: Starlette) -> AsyncIterator[None]:
+        async with session_manager.run():
+            logger.info(
+                "MCP HTTP server running — configure Claude to connect to http://%s:%d/mcp",
+                host,
+                port,
+            )
+            yield
+
+    starlette_app = Starlette(
+        routes=[Route("/mcp", endpoint=mcp_asgi)],
+        lifespan=lifespan,
+    )
+    protected = _APIKeyMiddleware(starlette_app, api_key)
+
+    config = uvicorn.Config(app=protected, host=host, port=port, log_level="info")
+    server = uvicorn.Server(config)
+    await server.serve()
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
 async def main() -> None:
-    """Run the MCP server."""
+    """Run the MCP server in the configured transport mode.
+
+    Set ``MCP_TRANSPORT=http`` for remote/HTTP mode (requires MCP_API_KEY).
+    Defaults to stdio transport for local Claude Desktop integration.
+    """
     global _locations_dir, _characters_dir, _sessions_dir
     _locations_dir = get_locations_directory()
     _characters_dir = get_characters_directory()
     _sessions_dir = get_sessions_directory()
 
-    async with stdio_server() as (read_stream, write_stream):
-        await app.run(
-            read_stream,
-            write_stream,
-            app.create_initialization_options(),
-        )
+    transport = os.environ.get("MCP_TRANSPORT", "stdio").lower()
+    if transport == "http":
+        await _run_http_server()
+    else:
+        async with stdio_server() as (read_stream, write_stream):
+            await app.run(
+                read_stream,
+                write_stream,
+                app.create_initialization_options(),
+            )
 
 
 if __name__ == "__main__":
