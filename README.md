@@ -270,12 +270,41 @@ claude mcp add \
 
 #### Claude.ai (web)
 
-1. Open **Customize → Connectors → Add**
-2. Enter the server URL: `http://your-server:8000/mcp`
-3. Enter your API key when prompted for authentication
-4. Click **Add**
+> **Limitation**: The web UI connector form only supports OAuth — it has no field for a
+> static Bearer token. The steps below use the **Claude API** instead, which does accept
+> a Bearer token directly. If you want the Connectors UI to work, you would need to add
+> OAuth support to the server.
 
-Your server must be publicly reachable from the internet for this to work.
+**Via the Claude API** (works with the Bearer token this server uses):
+
+```python
+import anthropic
+
+client = anthropic.Anthropic(api_key="YOUR_ANTHROPIC_API_KEY")
+response = client.beta.messages.create(
+    model="claude-opus-4-7",
+    max_tokens=1000,
+    messages=[{"role": "user", "content": "List all campaign locations."}],
+    mcp_servers=[{
+        "type": "url",
+        "url": "https://your-server:8000/mcp",
+        "name": "rpg-campaign",
+        "authorization_token": "your-mcp-api-key",
+    }],
+    betas=["mcp-client-2025-11-20"],
+)
+print(response.content)
+```
+
+**Via the Connectors UI** (for reference, requires OAuth on the server):
+
+1. Go to **https://claude.ai/settings/connectors**
+2. Click **Add custom connector**
+3. Enter the server URL: `https://your-server:8000/mcp`
+4. Under **Advanced settings**, fill in OAuth **Client ID** and **Client Secret**
+5. Click **Add**
+
+Your server must be publicly reachable over **HTTPS** (not plain HTTP) from the internet.
 
 #### Claude Desktop (via `mcp-remote` proxy)
 
