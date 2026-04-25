@@ -606,7 +606,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 TextContent(
                     type="text",
                     text=(
-                        f"Error: {e}\n\nPlease ensure the '__result.md' file exists in {_sessions_dir}"
+                        f"Error: {e}\n\nPlease ensure the '__result.md'"
+                        f" file exists in {_sessions_dir}"
                     ),
                 )
             ]
