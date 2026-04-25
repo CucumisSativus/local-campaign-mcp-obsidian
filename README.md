@@ -175,9 +175,14 @@ Retrieves the story so far from previous session notes.
 
 ## MCP Client Configuration
 
-To use this server with an MCP client (like Claude Desktop), add the following to your client configuration.
+The server supports two transport modes:
 
-### Claude Desktop Configuration
+| Mode | Use case | How to enable |
+|------|----------|---------------|
+| **stdio** (default) | Local Claude Desktop | No extra config needed |
+| **HTTP** | Remote/cloud hosting | Set `MCP_TRANSPORT=http` |
+
+### Local: Claude Desktop (stdio)
 
 Add to your `claude_desktop_config.json`:
 
@@ -216,6 +221,119 @@ Or if using uv:
 ```
 
 **Important**: Use absolute paths in the configuration file, not relative paths.
+
+---
+
+## Remote Deployment (HTTP mode)
+
+You can host the server on any machine and connect to it from Claude over the network.
+
+### 1. Generate an API key
+
+The server requires a secret key of at least 32 characters. Generate one:
+
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Keep this value — you will need it in every Claude client configuration below.
+
+### 2. Start the server
+
+```bash
+export LOCATIONS_PATH=/path/to/campaign/Locations
+export CHARACTERS_PATH=/path/to/campaign/Characters
+export SESSIONS_PATH=/path/to/campaign/sessions
+export MCP_TRANSPORT=http
+export MCP_API_KEY=<your-generated-key>
+export MCP_PORT=8000        # optional, default 8000
+export MCP_HOST=0.0.0.0     # optional, default 0.0.0.0
+
+python main.py
+# or: uv run python main.py
+```
+
+The server listens at `http://<host>:<port>/mcp`.  
+Put it behind a TLS-terminating reverse proxy (nginx, Caddy, etc.) for production use.
+
+### 3. Connect Claude
+
+#### Claude Code (CLI)
+
+```bash
+claude mcp add \
+  --transport http \
+  --header "Authorization: Bearer YOUR_API_KEY" \
+  rpg-campaign \
+  http://your-server:8000/mcp
+```
+
+#### Claude.ai (web)
+
+1. Open **Customize → Connectors → Add**
+2. Enter the server URL: `http://your-server:8000/mcp`
+3. Enter your API key when prompted for authentication
+4. Click **Add**
+
+Your server must be publicly reachable from the internet for this to work.
+
+#### Claude Desktop (via `mcp-remote` proxy)
+
+Claude Desktop does not support remote HTTP servers natively. Install the proxy first:
+
+```bash
+npm install -g mcp-remote
+```
+
+Then add to `claude_desktop_config.json`  
+(macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "rpg-campaign": {
+      "command": "npx",
+      "args": [
+        "mcp-remote@latest",
+        "http://your-server:8000/mcp",
+        "--header",
+        "Authorization:Bearer ${MCP_API_KEY}"
+      ],
+      "env": {
+        "MCP_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}
+```
+
+#### Claude API (programmatic)
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+response = client.beta.messages.create(
+    model="claude-opus-4-7",
+    max_tokens=1000,
+    messages=[{"role": "user", "content": "List all campaign locations."}],
+    mcp_servers=[{
+        "type": "url",
+        "url": "http://your-server:8000/mcp",
+        "name": "rpg-campaign",
+        "authorization_token": "your-api-key-here",
+    }],
+    betas=["mcp-client-2025-11-20"],
+)
+```
+
+### Security notes
+
+- **TLS**: Wrap the server with a reverse proxy that terminates HTTPS before exposing it publicly. The API key is sent in plain text over HTTP.
+- **Rate limiting**: The server allows 60 requests per minute per IP. Adjust `_RateLimiter` in `main.py` if needed.
+- **API key length**: The minimum enforced length is 32 characters. Use `secrets.token_hex(32)` (64 hex chars) or longer.
+
+---
 
 ## Development
 

@@ -2,7 +2,9 @@
 
 import os
 import tempfile
+from collections.abc import MutableMapping
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -12,6 +14,11 @@ from main import (
     Mood,
     ResonanceLevel,
     ResonanceResult,
+    _APIKeyMiddleware,
+    _RateLimiter,
+    _safe_join,
+    _validate_flat_name,
+    _validate_nested_name,
     calculate_victims_resonance,
     get_all_characters,
     get_all_locations,
@@ -416,3 +423,318 @@ def test_calculate_victims_resonance_acute_always_has_dyscrasia() -> None:
             if result.level == ResonanceLevel.ACUTE:
                 assert result.dyscrasia is not None
                 assert result.dyscrasia in DYSCRASIA_OPTIONS[mood]
+
+
+# ---------------------------------------------------------------------------
+# Security: path-component validation
+# ---------------------------------------------------------------------------
+
+
+class TestValidateFlatName:
+    def test_rejects_dotdot(self) -> None:
+        with pytest.raises(ValueError):
+            _validate_flat_name("../etc/passwd", "name")
+
+    def test_rejects_forward_slash(self) -> None:
+        with pytest.raises(ValueError):
+            _validate_flat_name("sub/dir", "name")
+
+    def test_rejects_backslash(self) -> None:
+        with pytest.raises(ValueError):
+            _validate_flat_name("foo\\bar", "name")
+
+    def test_rejects_null_byte(self) -> None:
+        with pytest.raises(ValueError):
+            _validate_flat_name("foo\x00bar", "name")
+
+    def test_rejects_empty(self) -> None:
+        with pytest.raises(ValueError):
+            _validate_flat_name("", "name")
+
+    def test_allows_spaces(self) -> None:
+        _validate_flat_name("Dark Forest", "name")  # must not raise
+
+    def test_allows_normal_name(self) -> None:
+        _validate_flat_name("Prince Sebastian", "name")  # must not raise
+
+
+class TestValidateNestedName:
+    def test_rejects_dotdot(self) -> None:
+        with pytest.raises(ValueError):
+            _validate_nested_name("../etc", "org")
+
+    def test_rejects_null_byte(self) -> None:
+        with pytest.raises(ValueError):
+            _validate_nested_name("guild\x00evil", "org")
+
+    def test_rejects_empty(self) -> None:
+        with pytest.raises(ValueError):
+            _validate_nested_name("", "org")
+
+    def test_allows_forward_slash(self) -> None:
+        _validate_nested_name("Mortals/second inquisition", "org")  # must not raise
+
+    def test_allows_normal_name(self) -> None:
+        _validate_nested_name("camarilla", "org")  # must not raise
+
+
+class TestSafeJoin:
+    def test_normal_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir).resolve()
+            result = _safe_join(base, "location.md")
+            assert result == base / "location.md"
+
+    def test_nested_normal_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir).resolve()
+            result = _safe_join(base, "org", "char.md")
+            assert result == base / "org" / "char.md"
+
+    def test_rejects_dotdot_traversal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir).resolve()
+            with pytest.raises(ValueError, match="Access denied"):
+                _safe_join(base, "../outside.md")
+
+    def test_rejects_absolute_path_component(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir).resolve()
+            # Path("/etc") as a component replaces the base on POSIX
+            with pytest.raises(ValueError, match="Access denied"):
+                _safe_join(base, "/etc/passwd")
+
+    def test_rejects_deep_traversal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir).resolve()
+            with pytest.raises(ValueError, match="Access denied"):
+                _safe_join(base, "sub", "../../etc/passwd")
+
+
+class TestGetLocationDetailsPathSafety:
+    def test_rejects_dotdot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with pytest.raises(ValueError):
+                get_location_details("../evil", Path(tmp_dir))
+
+    def test_rejects_slash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with pytest.raises(ValueError):
+                get_location_details("sub/dir", Path(tmp_dir))
+
+    def test_rejects_null_byte(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with pytest.raises(ValueError):
+                get_location_details("foo\x00bar", Path(tmp_dir))
+
+    def test_valid_name_still_raises_file_not_found(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with pytest.raises(FileNotFoundError):
+                get_location_details("NonExistent", Path(tmp_dir))
+
+
+class TestGetCharacterDetailsPathSafety:
+    def test_rejects_dotdot_in_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with pytest.raises(ValueError):
+                get_character_details("../evil", "camarilla", Path(tmp_dir))
+
+    def test_rejects_dotdot_in_organization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with pytest.raises(ValueError):
+                get_character_details("Character", "../etc", Path(tmp_dir))
+
+    def test_rejects_null_byte_in_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with pytest.raises(ValueError):
+                get_character_details("foo\x00bar", "camarilla", Path(tmp_dir))
+
+    def test_rejects_null_byte_in_org(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with pytest.raises(ValueError):
+                get_character_details("Character", "org\x00evil", Path(tmp_dir))
+
+    def test_rejects_slash_in_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with pytest.raises(ValueError):
+                get_character_details("sub/evil", "camarilla", Path(tmp_dir))
+
+    def test_nested_org_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            (tmp_path / "Mortals" / "second inquisition").mkdir(parents=True)
+            (tmp_path / "Mortals" / "second inquisition" / "Raphael.md").write_text("content")
+            result = get_character_details("Raphael", "Mortals/second inquisition", tmp_path)
+            assert result == "content"
+
+    def test_valid_inputs_still_raise_file_not_found(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with pytest.raises(FileNotFoundError):
+                get_character_details("Nobody", "camarilla", Path(tmp_dir))
+
+
+# ---------------------------------------------------------------------------
+# Security: rate limiter
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimiter:
+    def test_allows_requests_under_limit(self) -> None:
+        limiter = _RateLimiter(max_requests=5, window_seconds=60)
+        for _ in range(5):
+            assert limiter.is_allowed("client") is True
+
+    def test_blocks_when_limit_exceeded(self) -> None:
+        limiter = _RateLimiter(max_requests=3, window_seconds=60)
+        for _ in range(3):
+            limiter.is_allowed("client")
+        assert limiter.is_allowed("client") is False
+
+    def test_different_clients_tracked_independently(self) -> None:
+        limiter = _RateLimiter(max_requests=2, window_seconds=60)
+        limiter.is_allowed("alice")
+        limiter.is_allowed("alice")
+        assert limiter.is_allowed("alice") is False
+        assert limiter.is_allowed("bob") is True
+
+    def test_window_expiry_allows_new_requests(self) -> None:
+        import time
+
+        limiter = _RateLimiter(max_requests=2, window_seconds=1)
+        limiter.is_allowed("client")
+        limiter.is_allowed("client")
+        assert limiter.is_allowed("client") is False
+        time.sleep(1.05)
+        assert limiter.is_allowed("client") is True
+
+
+# ---------------------------------------------------------------------------
+# Security: API key middleware (async)
+# ---------------------------------------------------------------------------
+
+
+def _make_http_scope(
+    headers: list[tuple[bytes, bytes]] | None = None,
+    client_ip: str = "127.0.0.1",
+) -> MutableMapping[str, Any]:
+    return {
+        "type": "http",
+        "method": "GET",
+        "path": "/mcp",
+        "headers": headers or [],
+        "client": (client_ip, 12345),
+    }
+
+
+async def _collect_response(
+    middleware: _APIKeyMiddleware,
+    scope: MutableMapping[str, Any],
+) -> dict[str, Any]:
+    """Run middleware and collect the first http.response.start message."""
+    sent: list[MutableMapping[str, Any]] = []
+
+    async def receive() -> MutableMapping[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: MutableMapping[str, Any]) -> None:
+        sent.append(message)
+
+    await middleware(scope, receive, send)
+    return dict(sent[0]) if sent else {}
+
+
+@pytest.mark.anyio
+async def test_middleware_rejects_missing_token() -> None:
+    app_reached = False
+
+    async def inner(scope: Any, receive: Any, send: Any) -> None:
+        nonlocal app_reached
+        app_reached = True
+
+    mw = _APIKeyMiddleware(inner, "a" * 32)
+    response = await _collect_response(mw, _make_http_scope())
+    assert response["status"] == 401
+    assert not app_reached
+
+
+@pytest.mark.anyio
+async def test_middleware_rejects_wrong_token() -> None:
+    app_reached = False
+
+    async def inner(scope: Any, receive: Any, send: Any) -> None:
+        nonlocal app_reached
+        app_reached = True
+
+    mw = _APIKeyMiddleware(inner, "correct-key" + "x" * 21)
+    headers = [(b"authorization", b"Bearer wrong-key" + b"x" * 21)]
+    response = await _collect_response(mw, _make_http_scope(headers))
+    assert response["status"] == 401
+    assert not app_reached
+
+
+@pytest.mark.anyio
+async def test_middleware_accepts_correct_token() -> None:
+    api_key = "mysecretkey" + "x" * 21
+
+    app_reached = False
+
+    async def inner(scope: Any, receive: Any, send: Any) -> None:
+        nonlocal app_reached
+        app_reached = True
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+    mw = _APIKeyMiddleware(inner, api_key)
+    headers = [(b"authorization", f"Bearer {api_key}".encode())]
+    response = await _collect_response(mw, _make_http_scope(headers))
+    assert response["status"] == 200
+    assert app_reached
+
+
+@pytest.mark.anyio
+async def test_middleware_returns_429_when_rate_limited() -> None:
+    api_key = "validkey" + "x" * 24
+    headers = [(b"authorization", f"Bearer {api_key}".encode())]
+
+    call_count = 0
+
+    async def inner(scope: Any, receive: Any, send: Any) -> None:
+        nonlocal call_count
+        call_count += 1
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+    mw = _APIKeyMiddleware.__new__(_APIKeyMiddleware)
+    mw._app = inner
+    mw._api_key_bytes = api_key.encode()
+    mw._limiter = _RateLimiter(max_requests=2, window_seconds=60)
+
+    scope = _make_http_scope(headers)
+    await _collect_response(mw, scope)
+    await _collect_response(mw, scope)
+    response = await _collect_response(mw, scope)  # 3rd request — over limit
+
+    assert response["status"] == 429
+    assert call_count == 2  # inner app only reached for the first two
+
+
+@pytest.mark.anyio
+async def test_middleware_passes_lifespan_events_without_auth() -> None:
+    """Non-HTTP scopes (lifespan) must bypass the auth check."""
+    lifespan_reached = False
+
+    async def inner(scope: Any, receive: Any, send: Any) -> None:
+        nonlocal lifespan_reached
+        lifespan_reached = True
+
+    mw = _APIKeyMiddleware(inner, "a" * 32)
+    lifespan_scope: MutableMapping[str, Any] = {"type": "lifespan"}
+
+    async def receive() -> MutableMapping[str, Any]:
+        return {"type": "lifespan.startup"}
+
+    async def send(message: MutableMapping[str, Any]) -> None:
+        pass
+
+    await mw(lifespan_scope, receive, send)
+    assert lifespan_reached
