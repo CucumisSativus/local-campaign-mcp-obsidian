@@ -309,21 +309,21 @@ def get_character_details(character_name: str, organization: str, characters_dir
 
 
 def get_story_so_far(sessions_dir: Path) -> str:
-    """Get the story so far from the __result file in the sessions directory.
+    """Get the story so far from the __result.md file in the sessions directory.
 
     Args:
         sessions_dir: Path to the directory containing session notes
 
     Returns:
-        The content of the __result file containing the story so far
+        The content of the __result.md file containing the story so far
 
     Raises:
-        FileNotFoundError: If the __result file doesn't exist
+        FileNotFoundError: If the __result.md file doesn't exist
     """
-    file_path = sessions_dir / "__result"
+    file_path = sessions_dir / "__result.md"
 
     if not file_path.exists():
-        raise FileNotFoundError(f"Story file '__result' not found in {sessions_dir}")
+        raise FileNotFoundError(f"Story file '__result.md' not found in {sessions_dir}")
 
     return file_path.read_text(encoding="utf-8")
 
@@ -606,7 +606,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 TextContent(
                     type="text",
                     text=(
-                        f"Error: {e}\n\nPlease ensure the '__result' file exists in {_sessions_dir}"
+                        f"Error: {e}\n\nPlease ensure the '__result.md' file exists in {_sessions_dir}"
                     ),
                 )
             ]
